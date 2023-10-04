@@ -1,0 +1,14 @@
+name: ScheduledStop
+version: '${project.version}'
+main: cn.paper_card.scheduled_stop.ScheduledStop
+api-version: '1.20'
+folia-supported: true
+author: Paper99
+
+commands:
+  scheduled-stop:
+    permission: scheduled-stop.command
+
+permissions:
+  scheduled-stop.command:
+    default: op
