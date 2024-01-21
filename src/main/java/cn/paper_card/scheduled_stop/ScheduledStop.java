@@ -6,6 +6,8 @@ import cn.paper_card.qq_bind.api.BindInfo;
 import cn.paper_card.qq_bind.api.QqBindApi;
 import cn.paper_card.qq_group_access.api.GroupAccess;
 import cn.paper_card.qq_group_access.api.QqGroupAccessApi;
+import cn.paper_card.smurf.api.SmurfApi;
+import cn.paper_card.smurf.api.SmurfInfo;
 import com.github.Anon8281.universalScheduler.UniversalScheduler;
 import com.github.Anon8281.universalScheduler.scheduling.schedulers.TaskScheduler;
 import com.github.Anon8281.universalScheduler.scheduling.tasks.MyScheduledTask;
@@ -25,8 +27,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.LinkedList;
-import java.util.List;
+import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ScheduledStop extends JavaPlugin implements Listener {
@@ -44,6 +45,8 @@ public class ScheduledStop extends JavaPlugin implements Listener {
     private QqGroupAccessApi qqGroupAccessApi = null;
     private QqBindApi qqBindApi = null;
     private PaperCardAfkApi paperCardAfkApi = null;
+
+    private SmurfApi smurfApi = null;
 
     public ScheduledStop() {
         this.bossBar = this.getServer().createBossBar(null, BarColor.YELLOW, BarStyle.SEGMENTED_20);
@@ -115,6 +118,7 @@ public class ScheduledStop extends JavaPlugin implements Listener {
 
         this.qqBindApi = this.getServer().getServicesManager().load(QqBindApi.class);
         this.paperCardAfkApi = this.getServer().getServicesManager().load(PaperCardAfkApi.class);
+        this.smurfApi = this.getServer().getServicesManager().load(SmurfApi.class);
     }
 
     @Override
@@ -130,6 +134,23 @@ public class ScheduledStop extends JavaPlugin implements Listener {
         private Run(@NotNull String msg, long secs) {
             this.msg = msg;
             this.secs = secs;
+        }
+
+        private @NotNull String minuteAndSeconds(long secs) {
+            final long minutes = secs / 60;
+            secs %= 60;
+
+            final StringBuilder sb = new StringBuilder();
+
+            if (minutes != 0) {
+                sb.append(minutes);
+                sb.append('分');
+            }
+
+            sb.append(secs);
+            sb.append('秒');
+
+            return sb.toString();
         }
 
         private void notifyAfkPlayersInGroup(long secs, @NotNull String msg) {
@@ -161,23 +182,49 @@ public class ScheduledStop extends JavaPlugin implements Listener {
             }
 
             // 获取所有AFK玩家的QQ号码
-            final List<Long> qqs = new LinkedList<>();
+            final HashSet<Long> qqs = new HashSet<>();
+
+            final StringBuilder players = new StringBuilder();
+            int count = 0;
 
             try {
+                final SmurfApi smurfApi1 = smurfApi;
+
                 for (Player onlinePlayer : getServer().getOnlinePlayers()) {
                     final AfkPlayer afkPlayer = paperCardAfkApi1.getAfkPlayer(onlinePlayer.getUniqueId());
-                    assert (afkPlayer != null);
+                    if (afkPlayer == null) continue;
 
                     final long afkSince = afkPlayer.getAfkSince();
-                    if (afkSince > 0) {
-                        final BindInfo bindInfo;
-                        bindInfo = qqBindApi1.getBindService().queryByUuid(onlinePlayer.getUniqueId());
 
-                        if (bindInfo != null) {
-                            qqs.add(bindInfo.qq());
-                        } else {
-                            getSLF4JLogger().warn("AFK玩家%s没有绑定QQ，无法在QQ群通知".formatted(onlinePlayer.getName()));
+                    if (afkSince <= 0) continue;
+
+                    ++count;
+                    players.append(onlinePlayer.getName());
+                    players.append('、');
+
+                    boolean added = false;
+
+                    final BindInfo bindInfo = qqBindApi1.getBindService().queryByUuid(onlinePlayer.getUniqueId());
+
+                    if (bindInfo != null) {
+                        qqs.add(bindInfo.qq());
+                        added = true;
+                    }
+
+                    // 如果是小号，通知对应大号的QQ
+                    if (smurfApi1 != null) {
+                        final SmurfInfo smurfInfo = smurfApi1.getSmurfService().queryBySmurfUuid(onlinePlayer.getUniqueId());
+                        if (smurfInfo != null) {
+                            final BindInfo qqBind = qqBindApi1.getBindService().queryByUuid(smurfInfo.mainUuid());
+                            if (qqBind != null) {
+                                qqs.add(qqBind.qq());
+                                added = true;
+                            }
                         }
+                    }
+
+                    if (!added) {
+                        getSLF4JLogger().warn("无法通知AFK玩家 %s 下线".formatted(onlinePlayer.getName()));
                     }
                 }
             } catch (Exception e) {
@@ -186,8 +233,15 @@ public class ScheduledStop extends JavaPlugin implements Listener {
             }
 
             try {
-                mainGroupAccess.sendAtMessage(qqs, "服务器即将在%d秒后：%s，请做好下线准备".formatted(
-                        secs, msg
+                mainGroupAccess.sendAtMessage(qqs.stream().toList(), """
+                        \n
+                        服务器即将在%s后：%s
+                        请做好下线准备~
+                        ----
+                        当前%d个AFK玩家：
+                        %s""".formatted(
+                        minuteAndSeconds(secs), msg,
+                        count, players.toString()
                 ));
             } catch (Exception e) {
                 getSLF4JLogger().error("无法发送群消息", e);
@@ -229,12 +283,8 @@ public class ScheduledStop extends JavaPlugin implements Listener {
                     final double p = (double) delta / (double) (end - begin);
                     bossBar.setProgress(p);
 
-                    final long minutes = delta / (60 * 1000L);
-                    final long seconds = (delta - minutes * 60 * 1000L) / 1000L;
-
-                    bossBar.setTitle("将在%s%d秒后: %s".formatted(
-                            minutes == 0 ? "" : "%d分".formatted(minutes)
-                            , seconds, msg));
+                    bossBar.setTitle("将在%s后: %s".formatted(
+                            minuteAndSeconds(delta / 1000L), msg));
 
                     if (!isMusicPlaying.get() && delta <= 3 * 60 * 1000L + 15 * 1000L) {
 
