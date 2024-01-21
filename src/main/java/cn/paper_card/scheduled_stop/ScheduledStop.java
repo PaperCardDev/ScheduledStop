@@ -1,5 +1,11 @@
 package cn.paper_card.scheduled_stop;
 
+import cn.paper_card.afk.api.AfkPlayer;
+import cn.paper_card.afk.api.PaperCardAfkApi;
+import cn.paper_card.qq_bind.api.BindInfo;
+import cn.paper_card.qq_bind.api.QqBindApi;
+import cn.paper_card.qq_group_access.api.GroupAccess;
+import cn.paper_card.qq_group_access.api.QqGroupAccessApi;
 import com.github.Anon8281.universalScheduler.UniversalScheduler;
 import com.github.Anon8281.universalScheduler.scheduling.schedulers.TaskScheduler;
 import com.github.Anon8281.universalScheduler.scheduling.tasks.MyScheduledTask;
@@ -19,6 +25,8 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.LinkedList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ScheduledStop extends JavaPlugin implements Listener {
@@ -32,6 +40,10 @@ public class ScheduledStop extends JavaPlugin implements Listener {
     private boolean cancelTask = false;
 
     private final @NotNull TaskScheduler scheduler;
+
+    private QqGroupAccessApi qqGroupAccessApi = null;
+    private QqBindApi qqBindApi = null;
+    private PaperCardAfkApi paperCardAfkApi = null;
 
     public ScheduledStop() {
         this.bossBar = this.getServer().createBossBar(null, BarColor.YELLOW, BarStyle.SEGMENTED_20);
@@ -93,6 +105,16 @@ public class ScheduledStop extends JavaPlugin implements Listener {
         this.bossBar.setVisible(false);
 
         new MyCommand(this);
+
+        this.qqGroupAccessApi = this.getServer().getServicesManager().load(QqGroupAccessApi.class);
+        if (this.qqGroupAccessApi == null) {
+            this.getSLF4JLogger().warn("无法连接到" + QqGroupAccessApi.class.getSimpleName());
+        } else {
+            this.getSLF4JLogger().info("已连接到" + QqGroupAccessApi.class.getSimpleName());
+        }
+
+        this.qqBindApi = this.getServer().getServicesManager().load(QqBindApi.class);
+        this.paperCardAfkApi = this.getServer().getServicesManager().load(PaperCardAfkApi.class);
     }
 
     @Override
@@ -111,7 +133,65 @@ public class ScheduledStop extends JavaPlugin implements Listener {
         }
 
         private void notifyAfkPlayersInGroup(long secs, @NotNull String msg) {
-            // todo
+            final QqGroupAccessApi qqGroupAccessApi1 = qqGroupAccessApi;
+            if (qqGroupAccessApi1 == null) {
+                getSLF4JLogger().warn("QqGroupAccessApi不可用，无法在QQ群通知AFK玩家");
+                return;
+            }
+
+            final QqBindApi qqBindApi1 = qqBindApi;
+            if (qqBindApi1 == null) {
+                getSLF4JLogger().warn("QqBindApi不可用，无法在QQ群通知AFK玩家");
+                return;
+            }
+
+            final PaperCardAfkApi paperCardAfkApi1 = paperCardAfkApi;
+            if (paperCardAfkApi1 == null) {
+                getSLF4JLogger().warn("PaperCardAfkApi不可用，无法在QQ群通知AFK玩家");
+                return;
+            }
+
+            final GroupAccess mainGroupAccess;
+
+            try {
+                mainGroupAccess = qqGroupAccessApi1.createMainGroupAccess();
+            } catch (Exception e) {
+                getSLF4JLogger().error("无法访问QQ主群：", e);
+                return;
+            }
+
+            // 获取所有AFK玩家的QQ号码
+            final List<Long> qqs = new LinkedList<>();
+
+            try {
+                for (Player onlinePlayer : getServer().getOnlinePlayers()) {
+                    final AfkPlayer afkPlayer = paperCardAfkApi1.getAfkPlayer(onlinePlayer.getUniqueId());
+                    assert (afkPlayer != null);
+
+                    final long afkSince = afkPlayer.getAfkSince();
+                    if (afkSince > 0) {
+                        final BindInfo bindInfo;
+                        bindInfo = qqBindApi1.getBindService().queryByUuid(onlinePlayer.getUniqueId());
+
+                        if (bindInfo != null) {
+                            qqs.add(bindInfo.qq());
+                        } else {
+                            getSLF4JLogger().warn("AFK玩家%s没有绑定QQ，无法在QQ群通知".formatted(onlinePlayer.getName()));
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                getSLF4JLogger().error("", e);
+                return;
+            }
+
+            try {
+                mainGroupAccess.sendAtMessage(qqs, "服务器即将在%d秒后：%s，请做好下线准备".formatted(
+                        secs, msg
+                ));
+            } catch (Exception e) {
+                getSLF4JLogger().error("无法发送群消息", e);
+            }
         }
 
         @Override
@@ -177,7 +257,7 @@ public class ScheduledStop extends JavaPlugin implements Listener {
                         lockWait.wait(1000L);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
-                        e.printStackTrace();
+                        getSLF4JLogger().error("", e);
                         bossBar.removeAll();
                         return;
                     }
