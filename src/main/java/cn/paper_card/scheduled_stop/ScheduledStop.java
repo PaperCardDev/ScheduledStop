@@ -14,6 +14,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerKickEvent;
 import org.bukkit.permissions.Permission;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
@@ -136,15 +137,15 @@ public class ScheduledStop extends JavaPlugin implements Listener {
             final long begin = System.currentTimeMillis();
             final long end = begin + secs * 1000L;
 
-            bossBar.setVisible(false);
-            bossBar.setProgress(1.0);
+            scheduler.runTask(() -> {
+                bossBar.setVisible(false);
+                bossBar.setProgress(1.0);
 
-            for (final Player onlinePlayer : getServer().getOnlinePlayers()) {
-                bossBar.addPlayer(onlinePlayer);
-            }
-
-            bossBar.setVisible(true);
-
+                for (final Player onlinePlayer : getServer().getOnlinePlayers()) {
+                    bossBar.addPlayer(onlinePlayer);
+                }
+                bossBar.setVisible(true);
+            });
 
             synchronized (lockWait) {
 
@@ -152,20 +153,24 @@ public class ScheduledStop extends JavaPlugin implements Listener {
 
                 final AtomicBoolean isMusicPlaying = new AtomicBoolean(false);
 
-                for (final Player player : getServer().getOnlinePlayers()) {
-                    player.sendTitlePart(TitlePart.TITLE, Component.text("关服倒计时").color(NamedTextColor.RED));
-                    player.sendTitlePart(TitlePart.SUBTITLE, Component.text(msg).color(NamedTextColor.GOLD));
-                }
+                scheduler.runTask(() -> {
+                    for (final Player player : getServer().getOnlinePlayers()) {
+                        player.sendTitlePart(TitlePart.TITLE, Component.text("关服倒计时").color(NamedTextColor.RED));
+                        player.sendTitlePart(TitlePart.SUBTITLE, Component.text(msg).color(NamedTextColor.GOLD));
+                    }
+                });
 
                 for (long cur = begin; cur < end; cur = System.currentTimeMillis()) {
 
                     final long delta = end - cur;
 
                     final double p = (double) delta / (double) (end - begin);
-                    bossBar.setProgress(p);
 
-                    bossBar.setTitle("将在%s后: %s".formatted(
-                            minuteAndSeconds(delta / 1000L), msg));
+                    scheduler.runTask(() -> {
+                        bossBar.setProgress(p);
+                        bossBar.setTitle("将在%s后: %s".formatted(
+                                minuteAndSeconds(delta / 1000L), msg));
+                    });
 
                     if (!isMusicPlaying.get() && delta <= 3 * 60 * 1000L + 15 * 1000L) {
 
@@ -194,19 +199,35 @@ public class ScheduledStop extends JavaPlugin implements Listener {
                     }
 
                     if (cancelTask) {
-                        bossBar.removeAll();
-                        bossBar.setVisible(false);
+                        scheduler.runTask(() -> {
+                            bossBar.removeAll();
+                            bossBar.setVisible(false);
+                        });
                         lockWait.notify();
                         return;
                     }
                 }
             }
 
-            scheduler.runTask(() -> getServer().dispatchCommand(getServer().getConsoleSender(),
-                    "minecraft:stop"));
 
-            bossBar.removeAll();
-            bossBar.setVisible(false);
+            scheduler.runTask(() -> {
+
+                // 踢出全部玩家
+                for (Player onlinePlayer : getServer().getOnlinePlayers()) {
+                    onlinePlayer.kick(Component.text(msg), PlayerKickEvent.Cause.PLUGIN);
+                }
+
+                // stop
+                try {
+                    getServer().dispatchCommand(getServer().getConsoleSender(),
+                            "minecraft:stop");
+                } catch (Exception e) {
+                    getSLF4JLogger().error("fail to stop", e);
+                }
+
+                bossBar.removeAll();
+                bossBar.setVisible(false);
+            });
 
             synchronized (lockTask) {
                 task = null;
