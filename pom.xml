@@ -115,5 +115,12 @@
             <version>1.0</version>
             <scope>provided</scope>
         </dependency>
+
+        <dependency>
+            <groupId>com.github.PaperCardDev</groupId>
+            <artifactId>paper-client-api</artifactId>
+            <version>1.7</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 </project>

@@ -5,6 +5,9 @@ api-version: '1.20'
 folia-supported: true
 author: Paper99
 
+softdepend:
+  - PaperClient
+
 commands:
   scheduled-stop:
     permission: scheduled-stop.command

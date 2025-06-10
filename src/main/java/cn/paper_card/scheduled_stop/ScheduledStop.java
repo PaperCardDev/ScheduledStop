@@ -1,8 +1,11 @@
 package cn.paper_card.scheduled_stop;
 
+import cn.paper_card.client.api.PaperClientApi;
 import com.github.Anon8281.universalScheduler.UniversalScheduler;
 import com.github.Anon8281.universalScheduler.scheduling.schedulers.TaskScheduler;
 import com.github.Anon8281.universalScheduler.scheduling.tasks.MyScheduledTask;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import net.kyori.adventure.sound.Sound;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -33,6 +36,8 @@ public class ScheduledStop extends JavaPlugin implements Listener {
     private boolean cancelTask = false;
 
     private final @NotNull TaskScheduler scheduler;
+
+    private @Nullable PaperClientApi paperClientApi = null;
 
     public ScheduledStop() {
         this.bossBar = this.getServer().createBossBar(null, BarColor.YELLOW, BarStyle.SEGMENTED_20);
@@ -90,11 +95,14 @@ public class ScheduledStop extends JavaPlugin implements Listener {
 
     @Override
     public void onEnable() {
+
         getServer().getPluginManager().registerEvents(this, this);
+
         this.bossBar.setVisible(false);
 
         new MyCommand(this);
 
+        this.paperClientApi = getServer().getServicesManager().load(PaperClientApi.class);
     }
 
     @Override
@@ -146,6 +154,14 @@ public class ScheduledStop extends JavaPlugin implements Listener {
                 }
                 bossBar.setVisible(true);
             });
+
+            // 发送事件
+            final PaperClientApi api = paperClientApi;
+            if (api != null) {
+                final JsonObject dataObj = getJsonObject();
+
+                api.postEventAsync("mc.stop.scheduled", begin / 1000, dataObj, "");
+            }
 
             synchronized (lockWait) {
 
@@ -217,21 +233,41 @@ public class ScheduledStop extends JavaPlugin implements Listener {
                     onlinePlayer.kick(Component.text(msg), PlayerKickEvent.Cause.PLUGIN);
                 }
 
-                // stop
-                try {
-                    getServer().dispatchCommand(getServer().getConsoleSender(),
-                            "minecraft:stop");
-                } catch (Exception e) {
-                    getSLF4JLogger().error("fail to stop", e);
-                }
-
                 bossBar.removeAll();
                 bossBar.setVisible(false);
+
+                // stop
+                scheduler.runTaskLater(() -> {
+                    try {
+                        getServer().dispatchCommand(getServer().getConsoleSender(),
+                                "minecraft:stop");
+                    } catch (Exception e) {
+                        getSLF4JLogger().error("fail to stop", e);
+                    }
+                }, 1);
+
             });
 
             synchronized (lockTask) {
                 task = null;
             }
+        }
+
+        @NotNull
+        private JsonObject getJsonObject() {
+            final JsonObject dataObj = new JsonObject();
+            dataObj.addProperty("message", this.msg);
+            dataObj.addProperty("seconds", this.secs);
+            // 在线玩家列表
+            final JsonArray playerArr = new JsonArray();
+            for (Player onlinePlayer : getServer().getOnlinePlayers()) {
+                final JsonObject playerObj = new JsonObject();
+                playerObj.addProperty("name", onlinePlayer.getName());
+                playerObj.addProperty("uuid", onlinePlayer.getUniqueId().toString());
+                playerArr.add(playerObj);
+            }
+            dataObj.add("online_players", playerArr);
+            return dataObj;
         }
     }
 }
